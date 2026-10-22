@@ -22,12 +22,12 @@
     encode_copy_data_message/1,
     encode_copy_done/0,
     encode_copy_fail/1,
-    
+
     decode_message/2,
     decode_row/4,
-    
+
     bind_requires_statement_description/1
-    ]).
+]).
 
 %%====================================================================
 %% Constants
@@ -96,7 +96,7 @@ encode_copy_done() ->
 -spec encode_copy_fail(iodata()) -> binary().
 encode_copy_fail(ErrorMessage) ->
     encode_string_message($f, ErrorMessage).
-    
+
 %%--------------------------------------------------------------------
 %% @doc Encode a parse message.
 %%
@@ -113,15 +113,15 @@ encode_parse_message(PreparedStatementName, Query, DataTypes) ->
 %%--------------------------------------------------------------------
 %% @doc Encode a bind message.
 %%
--spec encode_bind_message(iodata(), iodata(), [any()], boolean()) -> binary().
+-spec encode_bind_message(iodata(), iodata(), [any()], boolean() | undefined) -> binary().
 encode_bind_message(PortalName, StatementName, Parameters, IntegerDateTimes) ->
     encode_bind_message(PortalName, StatementName, Parameters, [], IntegerDateTimes).
 
--spec encode_bind_message(iodata(), iodata(), [any()], [pgsql_oid()], boolean()) -> binary().
+-spec encode_bind_message(iodata(), iodata(), [any()], [pgsql_oid()], boolean() | undefined) -> binary().
 encode_bind_message(PortalName, StatementName, Parameters, ParametersDataTypes, IntegerDateTimes) ->
     encode_bind_message(PortalName, StatementName, Parameters, ParametersDataTypes, gb_trees:empty(), IntegerDateTimes).
 
--spec encode_bind_message(iodata(), iodata(), [any()], [pgsql_oid()], pgsql_oid_map(), boolean()) -> binary().
+-spec encode_bind_message(iodata(), iodata(), [any()], [pgsql_oid()], pgsql_oid_map(), boolean() | undefined) -> binary().
 encode_bind_message(PortalName, StatementName, Parameters, ParametersDataTypes, OIDMap, IntegerDateTimes) ->
     PortalNameBin = iolist_to_binary(PortalName),
     StatementNameBin = iolist_to_binary(StatementName),
@@ -154,7 +154,7 @@ encode_format(binary) -> <<1:16/integer>>.
 %% suitable for text and other types.
 %% JSON and INET/CIDR types are encoded as binaries.
 %%
--spec encode_parameter(any(), pgsql_oid() | undefined, pgsql_oid_map(), boolean()) -> {text | binary, binary()}.
+-spec encode_parameter(any(), pgsql_oid() | undefined, pgsql_oid_map(), boolean() | undefined) -> {text | binary, binary()}.
 encode_parameter({array, List}, Type, OIDMap, IntegerDateTimes) ->
     encode_array(List, Type, OIDMap, IntegerDateTimes);
 encode_parameter(Binary, ?TEXTOID, _OIDMap, _IntegerDateTimes) when is_binary(Binary) ->
@@ -165,13 +165,13 @@ encode_parameter({json, Binary}, _Type, _OIDMap, _IntegerDateTimes) ->
     {binary, <<Size:32/integer, Binary/binary>>};
 encode_parameter({jsonb, Binary}, _Type, _OIDMap, _IntegerDateTimes) ->
     Size = byte_size(Binary),
-    {binary, <<(Size+1):32/integer, ?JSONB_VERSION_1:8, Binary/binary>>};
+    {binary, <<(Size + 1):32/integer, ?JSONB_VERSION_1:8, Binary/binary>>};
 encode_parameter(Binary, _Type, _OIDMap, _IntegerDateTimes) when is_binary(Binary) ->
     % Encode the binary as text if it is a UUID.
     IsUUID = case Binary of
         <<_A:8/binary, $-, _B:4/binary, $-, _C:4/binary, $-, _D:4/binary, $-, _E:12/binary>> ->
             case io_lib:fread("~16u-~16u-~16u-~16u-~16u", binary_to_list(Binary)) of
-                {ok,[_AI, _BI, _CI, _DI, _EI],[]} -> true;
+                {ok, [_AI, _BI, _CI, _DI, _EI], []} -> true;
                 _ -> false
             end;
         _ -> false
@@ -233,15 +233,15 @@ encode_parameter({box, P1, P2}, _Type, _OIDMap, _IntegerDateTimes) ->
     Binary = <<$(, P1Bin/binary, $,, P2Bin/binary, $)>>,
     Size = byte_size(Binary),
     {text, <<Size:32/integer, Binary/binary>>};
-encode_parameter({path, open, [_|_]=PList}, _Type, _OIDMap, _IntegerDateTimes) ->
+encode_parameter({path, open, [_ | _] = PList}, _Type, _OIDMap, _IntegerDateTimes) ->
     Binary = encode_points_text($[, $], PList),
     Size = byte_size(Binary),
     {text, <<Size:32/integer, Binary/binary>>};
-encode_parameter({path, closed, [_|_]=PList}, _Type, _OIDMap, _IntegerDateTimes) ->
+encode_parameter({path, closed, [_ | _] = PList}, _Type, _OIDMap, _IntegerDateTimes) ->
     Binary = encode_points_text($(, $), PList),
     Size = byte_size(Binary),
     {text, <<Size:32/integer, Binary/binary>>};
-encode_parameter({polygon, [_|_]=PList}, _Type, _OIDMap, _IntegerDateTimes) ->
+encode_parameter({polygon, [_ | _] = PList}, _Type, _OIDMap, _IntegerDateTimes) ->
     Binary = encode_points_text($(, $), PList),
     Size = byte_size(Binary),
     {text, <<Size:32/integer, Binary/binary>>};
@@ -272,7 +272,7 @@ encode_point_text({X, Y}) ->
     YBin = list_to_binary(case is_integer(Y) of true -> integer_to_list(Y); false -> float_to_list(Y) end),
     <<$(, XBin/binary, $,, YBin/binary, $)>>.
 
-encode_points_text(Prefix, Suffix, [PHead|PTail]) ->
+encode_points_text(Prefix, Suffix, [PHead | PTail]) ->
     PHeadBin = encode_point_text(PHead),
     PTailBin = list_to_binary([begin PBin = encode_point_text(P), <<$,, PBin/binary>> end || P <- PTail]),
     <<Prefix, PHeadBin/binary, PTailBin/binary, Suffix>>.
@@ -324,7 +324,8 @@ array_type_to_element_type(?INETARRAYOID, _OIDMap) -> ?INETOID;
 array_type_to_element_type(?CSTRINGARRAYOID, _OIDMap) -> ?CSTRINGOID;
 array_type_to_element_type(TypeOID, OIDMap) ->
     Type = decode_oid(TypeOID, OIDMap),
-    if not is_atom(Type) -> undefined;
+    if
+        not is_atom(Type) -> undefined;
         true ->
             case atom_to_list(Type) of
                 [$_ | ContentType] -> % Array
@@ -365,13 +366,14 @@ encode_array_text([], Acc) ->
     Binary = list_to_binary([<<"{">>, JoinedStrings, <<"}">>]),
     Size = byte_size(Binary),
     {text, <<Size:32, Binary/binary>>}.
-    
+
 escape_array_text(Text) when byte_size(Text) =:= 4 ->
-    case string:to_lower(unicode:characters_to_list(Text)) of
-        "null" -> <<$", Text/binary, $">>;
+    case string:lowercase(Text) of
+        <<"null">> -> <<$", Text/binary, $">>;
         _ -> escape_array_text0(Text, [])
     end;
-escape_array_text(Text) -> escape_array_text0(Text, []).
+escape_array_text(Text) ->
+    escape_array_text0(Text, []).
 
 escape_array_text0(Text, Acc) ->
     case binary:match(Text, [<<$">>, <<$,>>, <<$ >>, <<$\\>>]) of
@@ -488,7 +490,7 @@ encode_cancel_message(ProcID, Secret) ->
 %% @doc Encode a string message.
 %%
 -spec encode_string_message(byte(), iodata()) -> binary().
-encode_string_message(Identifier, String) ->    
+encode_string_message(Identifier, String) ->
     StringBin = iolist_to_binary(String),
     MessageLen = byte_size(StringBin) + 5,
     <<Identifier, MessageLen:32/integer, StringBin/binary, 0>>.
@@ -603,7 +605,7 @@ decode_data_row_values0(<<-1:32/signed-integer, Rest/binary>>, N, Acc) when N > 
 decode_data_row_values0(<<ValueLen:32/integer, ValueBin:ValueLen/binary, Rest/binary>>, N, Acc) when N > 0 ->
     decode_data_row_values0(Rest, N - 1, [ValueBin | Acc]);
 decode_data_row_values0(<<_/binary>>, _N, _Acc) -> {error, invalid_value_len}.
-        
+
 decode_empty_query_response_message(<<>>) -> {ok, #empty_query_response{}};
 decode_empty_query_response_message(Payload) ->
     {error, {unknown_message, empty_query_response, Payload}}.
@@ -698,7 +700,8 @@ decode_row_description_message0(Count, Binary, Acc) ->
                         data_type_oid = DataTypeOid,
                         data_type_size = DataTypeSize,
                         type_modifier = TypeModifier,
-                        format = Format},
+                        format = Format
+                    },
                     decode_row_description_message0(Count - 1, Tail, [Field | Acc]);
                 {error, _} = Error -> Error
             end;
@@ -727,13 +730,12 @@ decode_error_and_notice_message_fields(Binary) ->
     decode_error_and_notice_message_fields0(Binary, []).
 
 decode_error_and_notice_message_fields0(<<0>>, Acc) ->
-  case application:get_env(pgsql, errors_as_maps) of
-    {ok, true} ->
-      {ok, maps:from_list(Acc)};
-    _ ->
-      {ok, lists:reverse(Acc)}
-  end;
-
+    case application:get_env(pgsql, errors_as_maps) of
+        {ok, true} ->
+            {ok, maps:from_list(Acc)};
+        _ ->
+            {ok, lists:reverse(Acc)}
+    end;
 decode_error_and_notice_message_fields0(<<FieldType, Rest0/binary>>, Acc) ->
     case decode_string(Rest0) of
         {ok, FieldString, Rest1} ->
@@ -801,7 +803,7 @@ decode_string(Binary) ->
 %%--------------------------------------------------------------------
 %% @doc Decode a row format.
 %%
--spec decode_row([#row_description_field{}], [binary()], pgsql_oid_map(), proplists:proplist()) -> tuple().
+-spec decode_row([#row_description_field{}], [binary() | null], pgsql_oid_map(), proplists:proplist()) -> tuple() | map().
 decode_row(Descs, Values, OIDMap, DecodeOptions) ->
     decode_row0(Descs, Values, OIDMap, DecodeOptions, []).
 
@@ -829,7 +831,7 @@ decode_value(#row_description_field{data_type_oid = DataTypeOID, format = binary
     decode_value_bin(DataTypeOID, Value, OIDMap, DecodeOptions).
 
 decode_value_text(TypeOID, Value, _OIDMap, _DecodeOptions) when TypeOID =:= ?INT8OID orelse TypeOID =:= ?INT2OID orelse TypeOID =:= ?INT4OID orelse TypeOID =:= ?OIDOID ->
-    list_to_integer(binary_to_list(Value));
+    binary_to_integer(Value);
 decode_value_text(TypeOID, Value, _OIDMap, _DecodeOptions) when TypeOID =:= ?FLOAT4OID orelse TypeOID =:= ?FLOAT8OID orelse TypeOID =:= ?NUMERICOID ->
     case Value of
         <<"NaN">> -> 'NaN';
@@ -875,27 +877,27 @@ decode_value_text(?TIMESTAMPTZOID, Value, _OIDMap, DecodeOptions) ->
         0 -> {{Year, Month, Day}, {Hour, Min, Secs}};
         _ ->
             {{AdjYear, AdjMonth, AdjDay}, {AdjHour, AdjMin, 0}} =
-            calendar:gregorian_seconds_to_datetime(
-                calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Min, 0}}) - (TZDelta * 60)),
+                calendar:gregorian_seconds_to_datetime(
+                    calendar:datetime_to_gregorian_seconds({{Year, Month, Day}, {Hour, Min, 0}}) - (TZDelta * 60)),
             {{AdjYear, AdjMonth, AdjDay}, {AdjHour, AdjMin, Secs}}
     end;
 decode_value_text(?POINTOID, Value, _OIDMap, _DecodeOptions) ->
     {P, []} = decode_point_text(binary_to_list(Value)),
     {point, P};
 decode_value_text(?LSEGOID, Value, _OIDMap, _DecodeOptions) ->
-    [$[|P1Str] = binary_to_list(Value),
-    {P1, [$,|P2Str]} = decode_point_text(P1Str),
+    [$[ | P1Str] = binary_to_list(Value),
+    {P1, [$, | P2Str]} = decode_point_text(P1Str),
     {P2, "]"} = decode_point_text(P2Str),
     {lseg, P1, P2};
 decode_value_text(?BOXOID, Value, _OIDMap, _DecodeOptions) ->
     P1Str = binary_to_list(Value),
-    {P1, [$,|P2Str]} = decode_point_text(P1Str),
+    {P1, [$, | P2Str]} = decode_point_text(P1Str),
     {P2, []} = decode_point_text(P2Str),
     {box, P1, P2};
-decode_value_text(?PATHOID, <<$[,_/binary>> = Value, _OIDMap, _DecodeOptions) ->
+decode_value_text(?PATHOID, <<$[, _/binary>> = Value, _OIDMap, _DecodeOptions) ->
     {Points, []} = decode_points_text($[, $], binary_to_list(Value)),
     {path, open, Points};
-decode_value_text(?PATHOID, <<$(,_/binary>> = Value, _OIDMap, _DecodeOptions) ->
+decode_value_text(?PATHOID, <<$(, _/binary>> = Value, _OIDMap, _DecodeOptions) ->
     {Points, []} = decode_points_text($(, $), binary_to_list(Value)),
     {path, closed, Points};
 decode_value_text(?POLYGONOID, Value, _OIDMap, _DecodeOptions) ->
@@ -906,8 +908,8 @@ decode_value_text(TypeOID, Value, _OIDMap, _DecodeOptions) when TypeOID =:= ?TEX
             orelse TypeOID =:= ?UUIDOID
             orelse TypeOID =:= ?NAMEOID
             orelse TypeOID =:= ?BPCHAROID
-            orelse TypeOID =:= ?VARCHAROID
-             -> Value;
+            orelse TypeOID =:= ?VARCHAROID ->
+    Value;
 decode_value_text(?CIDROID, Value, _OIDMap, _DecodeOptions) ->
     [AddrStr, BitSizeStr] = binary:split(Value, <<"/">>),
     {ok, Addr} = inet:parse_address(binary_to_list(AddrStr)),
@@ -918,7 +920,8 @@ decode_value_text(?INETOID, Value, _OIDMap, _DecodeOptions) ->
     {inet, Addr};
 decode_value_text(TypeOID, Value, OIDMap, DecodeOptions) ->
     Type = decode_oid(TypeOID, OIDMap),
-    if not is_atom(Type) -> {Type, Value};
+    if
+        not is_atom(Type) -> {Type, Value};
         true ->
             case atom_to_list(Type) of
                 [$_ | ContentType] -> % Array
@@ -949,10 +952,10 @@ decode_point_text(Str) ->
 decode_points_text(Prefix, Suffix, PStr) ->
     decode_points_text_aux(Prefix, Suffix, PStr, []).
 
-decode_points_text_aux(Prefix, Suffix, [Before|PStr], PAcc) when Before =:= $, orelse Before =:= Prefix ->
+decode_points_text_aux(Prefix, Suffix, [Before | PStr], PAcc) when Before =:= $, orelse Before =:= Prefix ->
     {P, AfterP} = decode_point_text(PStr),
-    decode_points_text_aux(Prefix, Suffix, AfterP, [P|PAcc]);
-decode_points_text_aux(_, Suffix, [Suffix|After], PAcc) ->
+    decode_points_text_aux(Prefix, Suffix, AfterP, [P | PAcc]);
+decode_points_text_aux(_, Suffix, [Suffix | After], PAcc) ->
     {lists:reverse(PAcc), After}.
 
 decode_secs_and_tz(SecsStr, DecodeOptions) ->
@@ -1003,7 +1006,6 @@ type_to_oid(Type, OIDMap) ->
     {OIDType, _} = lists:keyfind(Type, 2, List),
     OIDType.
 
-
 decode_array_text(_Type, _OIDMap, _DecodeOptions, <<>>, [Acc]) ->
     {Acc, <<>>};
 decode_array_text(Type, OIDMap, DecodeOptions, <<"{", Next/binary>>, Acc) ->
@@ -1019,7 +1021,7 @@ decode_array_text(Type, OIDMap, DecodeOptions, Content0, Acc) ->
         <<"NULL">> -> null;
         _ -> decode_value_text(Type, Value, OIDMap, DecodeOptions)
     end,
-    decode_array_text(Type, OIDMap, DecodeOptions, Rest, [Element|Acc]).
+    decode_array_text(Type, OIDMap, DecodeOptions, Rest, [Element | Acc]).
 
 decode_array_text0(<<$", Rest/binary>>, false, []) ->
     decode_array_text0(Rest, true, []);
@@ -1050,13 +1052,13 @@ decode_value_bin(?TEXTOID, Value, _OIDMap, _DecodeOptions) -> Value;
 decode_value_bin(?BPCHAROID, Value, _OIDMap, _DecodeOptions) -> Value;
 decode_value_bin(?VARCHAROID, Value, _OIDMap, _DecodeOptions) -> Value;
 decode_value_bin(?FLOAT4OID, <<Value:32/float>>, _OIDMap, _DecodeOptions) -> Value;
-decode_value_bin(?FLOAT4OID, <<127,192,0,0>>, _OIDMap, _DecodeOptions) -> 'NaN';
-decode_value_bin(?FLOAT4OID, <<127,128,0,0>>, _OIDMap, _DecodeOptions) -> 'Infinity';
-decode_value_bin(?FLOAT4OID, <<255,128,0,0>>, _OIDMap, _DecodeOptions) -> '-Infinity';
+decode_value_bin(?FLOAT4OID, <<127, 192, 0, 0>>, _OIDMap, _DecodeOptions) -> 'NaN';
+decode_value_bin(?FLOAT4OID, <<127, 128, 0, 0>>, _OIDMap, _DecodeOptions) -> 'Infinity';
+decode_value_bin(?FLOAT4OID, <<255, 128, 0, 0>>, _OIDMap, _DecodeOptions) -> '-Infinity';
 decode_value_bin(?FLOAT8OID, <<Value:64/float>>, _OIDMap, _DecodeOptions) -> Value;
-decode_value_bin(?FLOAT8OID, <<127,248,0,0,0,0,0,0>>, _OIDMap, _DecodeOptions) -> 'NaN';
-decode_value_bin(?FLOAT8OID, <<127,240,0,0,0,0,0,0>>, _OIDMap, _DecodeOptions) -> 'Infinity';
-decode_value_bin(?FLOAT8OID, <<255,240,0,0,0,0,0,0>>, _OIDMap, _DecodeOptions) -> '-Infinity';
+decode_value_bin(?FLOAT8OID, <<127, 248, 0, 0, 0, 0, 0, 0>>, _OIDMap, _DecodeOptions) -> 'NaN';
+decode_value_bin(?FLOAT8OID, <<127, 240, 0, 0, 0, 0, 0, 0>>, _OIDMap, _DecodeOptions) -> 'Infinity';
+decode_value_bin(?FLOAT8OID, <<255, 240, 0, 0, 0, 0, 0, 0>>, _OIDMap, _DecodeOptions) -> '-Infinity';
 decode_value_bin(?UUIDOID, Value, _OIDMap, _DecodeOptions) ->
     <<UUID_A:32/integer, UUID_B:16/integer, UUID_C:16/integer, UUID_D:16/integer, UUID_E:48/integer>> = Value,
     UUIDStr = io_lib:format("~8.16.0b-~4.16.0b-~4.16.0b-~4.16.0b-~12.16.0b", [UUID_A, UUID_B, UUID_C, UUID_D, UUID_E]),
@@ -1080,7 +1082,8 @@ decode_value_bin(?INETOID, <<2, 32, 0, 4, X, Y, Z, T>>, _OIDMap, _DecodeOptions)
 decode_value_bin(?INETOID, <<3, 128, 0, 16, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>, _OIDMap, _DecodeOptions) -> {inet, {A, B, C, D, E, F, G, H}}; % IPv6 (3 == inet6)
 decode_value_bin(TypeOID, Value, OIDMap, DecodeOptions) ->
     Type = decode_oid(TypeOID, OIDMap),
-    if not is_atom(Type) -> {Type, Value};
+    if
+        not is_atom(Type) -> {Type, Value};
         true ->
             case atom_to_list(Type) of
                 [$_ | _] -> % Array
@@ -1095,13 +1098,13 @@ decode_points_bin(<<N:32/unsigned-integer, Points/binary>>) ->
 decode_points_bin(0, <<>>, Acc) ->
     lists:reverse(Acc);
 decode_points_bin(N, <<PX:64/float, PY:64/float, Tail/binary>>, Acc) when N > 0 ->
-    decode_points_bin(N - 1, Tail, [{PX, PY}|Acc]).
+    decode_points_bin(N - 1, Tail, [{PX, PY} | Acc]).
 
 decode_array_bin(<<Dimensions:32/signed-integer, _Flags:32/signed-integer, ElementOID:32/signed-integer, Remaining/binary>>, OIDMap, DecodeOptions) ->
     {RemainingData, DimsInfo} = lists:foldl(fun(_Pos, {Bin, Acc}) ->
-                <<Nbr:32/signed-integer, LBound:32/signed-integer, Next/binary>> = Bin,
-                {Next, [{Nbr, LBound} | Acc]}
-        end, {Remaining, []}, lists:seq(1, Dimensions)),
+        <<Nbr:32/signed-integer, LBound:32/signed-integer, Next/binary>> = Bin,
+        {Next, [{Nbr, LBound} | Acc]}
+    end, {Remaining, []}, lists:seq(1, Dimensions)),
     DataList = decode_array_bin_aux(ElementOID, RemainingData, OIDMap, DecodeOptions, []),
     Expanded = expand(DataList, DimsInfo),
     Expanded.
@@ -1110,17 +1113,16 @@ expand([], []) ->
     {array, []};
 expand([List], []) ->
     List;
-expand(List, [{Nbr,_}|NextDim]) ->
+expand(List, [{Nbr, _} | NextDim]) ->
     List2 = expand_aux(List, Nbr, Nbr, [], []),
     expand(List2, NextDim).
 
 expand_aux([], 0, _, Current, Acc) ->
     lists:reverse([{array, lists:reverse(Current)} | Acc]);
 expand_aux(List, 0, Nbr, Current, Acc) ->
-    expand_aux(List, Nbr, Nbr, [], [ {array, lists:reverse(Current)} | Acc]);
-expand_aux([E|Next], Level, Nbr, Current, Acc) ->
-    expand_aux(Next, Level-1, Nbr, [E | Current], Acc).
-
+    expand_aux(List, Nbr, Nbr, [], [{array, lists:reverse(Current)} | Acc]);
+expand_aux([E | Next], Level, Nbr, Current, Acc) ->
+    expand_aux(Next, Level - 1, Nbr, [E | Current], Acc).
 
 decode_array_bin_aux(_ElementOID, <<>>, _OIDMap, _DecodeOptions, Acc) ->
     lists:reverse(Acc);
@@ -1187,7 +1189,7 @@ decode_time0(Seconds, USecs, DecodeOptions) ->
 
 decode_time_tz(<<TimeBin:8/binary, TZ:32/signed-integer>>, IntegerDateTimes, DecodeOptions) ->
     Decoded = decode_time(TimeBin, IntegerDateTimes, DecodeOptions),
-    adjust_time(Decoded, - (TZ div 60)).
+    adjust_time(Decoded, -(TZ div 60)).
 
 adjust_time(Time, 0) -> Time;
 adjust_time({Hour, Min, Secs}, TZDelta) when TZDelta > 0 ->
@@ -1197,8 +1199,8 @@ adjust_time({Hour, Min, Secs}, TZDelta) ->
 
 decode_timestamp(<<16#7FFFFFFFFFFFFFFF:64/signed-integer>>, true, _DecodeOptions) -> infinity;
 decode_timestamp(<<-16#8000000000000000:64/signed-integer>>, true, _DecodeOptions) -> '-infinity';
-decode_timestamp(<<127,240,0,0,0,0,0,0>>, false, _DecodeOptions) -> infinity;
-decode_timestamp(<<255,240,0,0,0,0,0,0>>, false, _DecodeOptions) -> '-infinity';
+decode_timestamp(<<127, 240, 0, 0, 0, 0, 0, 0>>, false, _DecodeOptions) -> infinity;
+decode_timestamp(<<255, 240, 0, 0, 0, 0, 0, 0>>, false, _DecodeOptions) -> '-infinity';
 decode_timestamp(<<Timestamp:64/signed-integer>>, true, DecodeOptions) ->
     TimestampSecs = Timestamp div 1000000,
     USecs = Timestamp rem 1000000,

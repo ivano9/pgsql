@@ -41,10 +41,10 @@
     foreach/4,
     foreach/5,
     foreach/6,
- 
+
     send_copy_data/2,
     send_copy_end/1,
-    
+
     % Cancel current query
     cancel/1,
 
@@ -60,7 +60,7 @@
     param_query/3,
     param_query/4,
     param_query/5,
-    
+
     convert_statement/1,
 
     % supervisor API
@@ -76,19 +76,20 @@
 
     % url parser
     parse_url/1
-    ]).
+]).
 
 -export_type([
     row/0,
     rows/0,
     result_tuple/0,
-    pgsql_connection/0]).
+    pgsql_connection/0
+]).
 
 %%--------------------------------------------------------------------
 %% Default settings
 %%--------------------------------------------------------------------
 
--define(REQUEST_TIMEOUT, infinity). 
+-define(REQUEST_TIMEOUT, infinity).
 -define(DEFAULT_HOST, "127.0.0.1").
 -define(DEFAULT_PORT, 5432).
 -define(DEFAULT_USER, "storage").
@@ -137,7 +138,7 @@
     |   {password, iodata()}                    % default: none
     |   {fetch_oid_map, boolean()}              % default: true
     |   {ssl, boolean()}                        % default: false
-    |   {ssl_options, [ssl:ssl_option()]}       % default: []
+    |   {ssl_options, [ssl:tls_client_option()]} % default: []
     |   {reconnect, boolean()}                  % default: true
     |   {application_name, atom() | iodata()}   % default: node()
     |   {timezone, iodata() | undefined}        % default: undefined (not set)
@@ -157,17 +158,17 @@
 -type from() :: {pid(), term()}.
 
 -record(state, {
-      options           :: open_options(),
-      socket            :: socket() | closed,   %% gen_tcp or ssl socket
-      subscribers       :: [{pid(), reference()}],
-      backend_procid    :: integer() | undefined,
-      backend_secret    :: integer() | undefined,
-      integer_datetimes :: boolean() | undefined,
-      oidmap            :: pgsql_oid_map(),
-      current           :: {tuple(), reference(), from()} | undefined | {tuple(), from()},
-      pending           :: [{tuple(), reference(), from()}] | [{tuple(), from()}],
-      statement_timeout :: non_neg_integer() | undefined    %% to pipeline statements with timeouts, currently unused
-     }).
+    options           :: open_options(),
+    socket            :: socket() | closed,   %% gen_tcp or ssl socket
+    subscribers       :: [{pid(), reference()}],
+    backend_procid    :: integer() | undefined,
+    backend_secret    :: integer() | undefined,
+    integer_datetimes :: boolean() | undefined,
+    oidmap            :: pgsql_oid_map(),
+    current           :: {tuple(), reference(), from()} | undefined | {tuple(), from()},
+    pending           :: [{tuple(), reference(), from()}] | [{tuple(), from()}],
+    statement_timeout :: non_neg_integer() | undefined    %% to pipeline statements with timeouts, currently unused
+}).
 
 -define(MESSAGE_HEADER_SIZE, 5).
 
@@ -194,11 +195,11 @@
         % expect copy_data or copy_done
     |   {copy, [pgsql_format()]}.
 
--define(binary_to_integer(Bin), list_to_integer(binary_to_list(Bin))).
+-define(binary_to_integer(Bin), binary_to_integer(Bin)).
 
 %%--------------------------------------------------------------------
 %% @doc Open a connection to a database, throws an error if it failed.
-%% 
+%%
 -spec open(iodata() | open_options()) -> pgsql_connection().
 open([Option | _OptionsT] = Options) when is_tuple(Option) orelse is_atom(Option) ->
     open0(Options);
@@ -209,28 +210,28 @@ open(Database) ->
 
 %%--------------------------------------------------------------------
 %% @doc Open a connection to a database, throws an error if it failed.
-%% 
+%%
 -spec open(iodata(), iodata()) -> pgsql_connection().
 open(Database, User) ->
     open(Database, User, ?DEFAULT_PASSWORD).
 
 %%--------------------------------------------------------------------
 %% @doc Open a connection to a database, throws an error if it failed.
-%% 
+%%
 -spec open(iodata(), iodata(), iodata()) -> pgsql_connection().
 open(Database, User, Password) ->
     open(?DEFAULT_HOST, Database, User, Password).
 
 %%--------------------------------------------------------------------
 %% @doc Open a connection to a database, throws an error if it failed.
-%% 
+%%
 -spec open(string(), string(), string(), string()) -> pgsql_connection().
 open(Host, Database, User, Password) ->
     open(Host, Database, User, Password, []).
 
 %%--------------------------------------------------------------------
 %% @doc Open a connection to a database, throws an error if it failed.
-%% 
+%%
 -spec open(string(), string(), string(), string(), open_options()) -> pgsql_connection().
 open(Host, Database, User, Password, Options0) ->
     Options = [{host, Host}, {database, Database}, {user, User}, {password, Password} | Options0],
@@ -240,13 +241,13 @@ open0(Options) ->
     case pgsql_connection_sup:start_child(Options) of
         {ok, Pid} ->
             {pgsql_connection, Pid};
-        {error, Error} -> 
+        {error, Error} ->
             throw(Error)
     end.
 
 %%--------------------------------------------------------------------
 %% @doc Close a connection.
-%% 
+%%
 -spec close(pgsql_connection()) -> ok.
 close({pgsql_connection, Pid}) ->
     MonitorRef = erlang:monitor(process, Pid),
@@ -263,7 +264,7 @@ close({pgsql_connection, Pid}) ->
 %% <li>``{updated, NbRows}'' if the query was not a SELECT query.</li>
 %% </ul>
 %% (the return types are compatible with ODBC's sql_query function).
-%% 
+%%
 -spec sql_query(iodata(), pgsql_connection()) -> odbc_result_tuple() | {error, any()}.
 sql_query(Query, Connection) ->
     sql_query(Query, [], Connection).
@@ -576,33 +577,36 @@ terminate(_Reason, #state{socket = {SocketModule, Socket}}) ->
 %% @doc Parse a postgres connection URL into components
 %%
 %% Example: postgres://username:password@host:port/database
--spec parse_url(iodata()) -> [].
-parse_url("postgres://"++_RemainingUrl) -> 
-    [Credentials, HostPortDatabase] = split_to_second_part(string:split(_RemainingUrl, "@")),
+-spec parse_url(iodata()) -> open_options().
+parse_url("postgres://" ++ RemainingUrl) ->
+    [Credentials, HostPortDatabase] = split_to_second_part(string:split(RemainingUrl, "@")),
     [Username, Password] = split_to_first_part(string:split(Credentials, ":")),
     [HostPort, Database] = split_to_first_part(string:split(HostPortDatabase, "/")),
     [Host, Port] = split_to_first_part(string:split(HostPort, ":")),
     ParsedOptionsEmpty = [],
     ParsedOptionsWithUserName = case string:is_empty(Username) of
-            false -> ParsedOptionsEmpty ++ [{user, Username}];
-            true -> ParsedOptionsEmpty
+        false -> ParsedOptionsEmpty ++ [{user, Username}];
+        true -> ParsedOptionsEmpty
     end,
     ParsedOptionsWithPassword = case string:is_empty(Password) of
         false -> ParsedOptionsWithUserName ++ [{password, Password}];
         true -> ParsedOptionsWithUserName
     end,
-    ParsedOptionsWithHost = case string:is_empty(Host) of 
-        false  -> ParsedOptionsWithPassword ++ [{host, Host}];
+    ParsedOptionsWithHost = case string:is_empty(Host) of
+        false -> ParsedOptionsWithPassword ++ [{host, Host}];
         true -> ParsedOptionsWithPassword
     end,
-    ParsedOptionsWithPort = case string:is_empty(Port) of 
-        false -> case string:to_integer(Port) of
-            {Portnum, _} -> ParsedOptionsWithHost ++ [{port, Portnum}];
-            {error, Reason} -> throw(io_lib:format("Unable to parse port ~p into an integer due to: ~p", Port, Reason))
-        end;
+    ParsedOptionsWithPort = case string:is_empty(Port) of
+        false ->
+            try list_to_integer(lists:flatten(io_lib:format("~s", [Port]))) of
+                Portnum -> ParsedOptionsWithHost ++ [{port, Portnum}]
+            catch
+                error:Reason ->
+                    throw(io_lib:format("Unable to parse port ~p into an integer due to: ~p", [Port, Reason]))
+            end;
         true -> ParsedOptionsWithHost
     end,
-    ParsedOptionsWithDatabase = case string:is_empty(Database) of 
+    ParsedOptionsWithDatabase = case string:is_empty(Database) of
         false -> ParsedOptionsWithPort ++ [{database, Database}];
         true -> ParsedOptionsWithPort
     end,
@@ -612,16 +616,15 @@ parse_url("postgres://"++_RemainingUrl) ->
 %% Private functions
 %%====================================================================
 
-
-%% @doc splits string, but when unsplittable, assigns result 
+%% @doc splits string, but when unsplittable, assigns result
 %%      to second part. First part is an empty string ("").
 split_to_second_part([OnlyOne]) ->
     ["", OnlyOne];
 split_to_second_part([One, Two]) ->
     [One, Two].
 
-%% @doc splits string, but when unsplittable, assigns result 
-%%      to second part. First part is an empty string ("").
+%% @doc splits string, but when unsplittable, assigns result
+%%      to first part. Second part is an empty string ("").
 split_to_first_part([OnlyOne]) ->
     [OnlyOne, ""];
 split_to_first_part([One, Two]) ->
@@ -633,14 +636,15 @@ split_to_first_part([One, Two]) ->
 pgsql_open(#state{options = RawOptions} = RawState0) ->
     Url = proplists:get_value(url, RawOptions, ""),
     NotEmpty = not string:is_empty(Url),
-    Options = if NotEmpty ->
+    Options = if
+        NotEmpty ->
             ParsedFromUrlOptions = parse_url(Url),
             OriginalWithoutUrlOptions = proplists:delete(url, RawOptions),
-            UnifiedOptions = ParsedFromUrlOptions++OriginalWithoutUrlOptions,
-            UnifiedOptions;
-        true -> RawOptions
+            ParsedFromUrlOptions ++ OriginalWithoutUrlOptions;
+        true ->
+            RawOptions
     end,
-    State0=#state{
+    State0 = #state{
         options = Options,
         socket = RawState0#state.socket,
         subscribers = RawState0#state.subscribers,
@@ -748,7 +752,6 @@ pgsql_setup_authenticate_cleartext_password(Socket, #state{options = Options} = 
     Password = proplists:get_value(password, Options, ?DEFAULT_PASSWORD),
     pgsql_setup_authenticate_password(Socket, Password, State0).
 
--ifndef(old_hash).
 pgsql_setup_authenticate_md5_password(Socket, Salt, #state{options = Options} = State0) ->
     User = proplists:get_value(user, Options, ?DEFAULT_USER),
     Password = proplists:get_value(password, Options, ?DEFAULT_PASSWORD),
@@ -759,18 +762,6 @@ pgsql_setup_authenticate_md5_password(Socket, Salt, #state{options = Options} = 
     MD52Hex = io_lib:format("~32.16.0b", [MD52Int]),
     MD5ChallengeResponse = ["md5", MD52Hex],
     pgsql_setup_authenticate_password(Socket, MD5ChallengeResponse, State0).
--else.
-pgsql_setup_authenticate_md5_password(Socket, Salt, #state{options = Options} = State0) ->
-    User = proplists:get_value(user, Options, ?DEFAULT_USER),
-    Password = proplists:get_value(password, Options, ?DEFAULT_PASSWORD),
-    % concat('md5', md5(concat(md5(concat(password, username)), random-salt)))
-    <<MD51Int:128>> = crypto:md5([Password, User]),
-    MD51Hex = io_lib:format("~32.16.0b", [MD51Int]),
-    <<MD52Int:128>> = crypto:md5([MD51Hex, Salt]),
-    MD52Hex = io_lib:format("~32.16.0b", [MD52Int]),
-    MD5ChallengeResponse = ["md5", MD52Hex],
-    pgsql_setup_authenticate_password(Socket, MD5ChallengeResponse, State0).
--endif.
 
 pgsql_setup_authenticate_password({SockModule, Sock} = Socket, Password, #state{subscribers = Subscribers} = State0) ->
     Message = pgsql_protocol:encode_password_message(Password),
@@ -823,22 +814,32 @@ pgsql_simple_query(Query, QueryOptions, Timeout, From, #state{socket = {SockModu
             Queries = [
                 io_lib:format("set statement_timeout = ~B", [Value]),
                 Query,
-                "set statement_timeout to default"],
+                "set statement_timeout to default"
+            ],
             SinglePacket = [pgsql_protocol:encode_query_message(AQuery) || AQuery <- Queries],
             case SockModule:send(Sock, SinglePacket) of
                 ok ->
                     {SetResult, State1} = pgsql_simple_query_loop([], [], sync, QueryOptions, State0),
-                    true = set_succeeded_or_within_failed_transaction(SetResult),
-                    spawn_link(fun() ->
-                        pgsql_simple_query_loop([], [], {async, ConnPid, fun(QueryResult) ->
-                            pgsql_simple_query_loop([], [], {async, ConnPid, fun(ResetResult) ->
-                                true = set_succeeded_or_within_failed_transaction(ResetResult),
-                                gen_server:reply(From, QueryResult),
-                                gen_server:cast(ConnPid, {command_completed, CurrentCommand})
-                            end}, QueryOptions, State1)
-                        end}, QueryOptions, State1)
-                    end),
-                    State1;
+                    case set_succeeded_or_within_failed_transaction(SetResult) of
+                        true ->
+                            spawn_link(fun() ->
+                                pgsql_simple_query_loop([], [], {async, ConnPid, fun
+                                    ({error, closed} = QueryError) ->
+                                        gen_server:reply(From, QueryError),
+                                        gen_server:cast(ConnPid, {command_completed, CurrentCommand});
+                                    (QueryResult) ->
+                                        pgsql_simple_query_loop([], [], {async, ConnPid, fun(ResetResult) ->
+                                            _ = set_succeeded_or_within_failed_transaction(ResetResult),
+                                            gen_server:reply(From, QueryResult),
+                                            gen_server:cast(ConnPid, {command_completed, CurrentCommand})
+                                        end}, QueryOptions, State1)
+                                end}, QueryOptions, State1)
+                            end),
+                            State1;
+                        false ->
+                            gen_server:reply(From, SetResult),
+                            command_completed(CurrentCommand, State1)
+                    end;
                 {error, closed} = SendQueryError ->
                     gen_server:reply(From, SendQueryError),
                     State1 = State0#state{socket = closed},
@@ -849,16 +850,15 @@ pgsql_simple_query(Query, QueryOptions, Timeout, From, #state{socket = {SockModu
             end
     end.
 
-% This function should always return true as set or reset may only fail because
-% we are within a failed transaction.
-% If set failed because the transaction was aborted, the query will fail
-% (unless it is a rollback).
-% If set succeeded within a transaction, but the query failed, the reset may
-% fail but set only applies to the transaction anyway.
--spec set_succeeded_or_within_failed_transaction({set, []} | {error, pgsql_error:pgsql_error()}) -> boolean().
-set_succeeded_or_within_failed_transaction({set, []}) -> true;
+% This function returns true when set/reset succeeded or failed only because
+% we are within a failed transaction, and false on transport/unexpected errors.
+-spec set_succeeded_or_within_failed_transaction({set, []} | {error, any()}) -> boolean().
+set_succeeded_or_within_failed_transaction({set, []}) ->
+    true;
 set_succeeded_or_within_failed_transaction({error, {pgsql_error, _} = Error}) ->
-    pgsql_error:is_in_failed_sql_transaction(Error).
+    pgsql_error:is_in_failed_sql_transaction(Error);
+set_succeeded_or_within_failed_transaction({error, _}) ->
+    false.
 
 -spec pgsql_simple_query0(iodata(), sync, query_options(), #state{}) -> {tuple(), #state{}};
                          (iodata(), {async, pid(), fun((any()) -> ok)}, query_options(), #state{}) -> ok.
@@ -945,17 +945,26 @@ pgsql_extended_query(Query, Parameters, Fun, Acc0, FinalizeFun, Mode, QueryOptio
             State0;
         Value ->
             {SetResult, State1} = pgsql_simple_query0(io_lib:format("set statement_timeout = ~B", [Value]), sync, [], State0),
-            true = set_succeeded_or_within_failed_transaction(SetResult),
-            spawn_link(fun() ->
-                pgsql_extended_query0(Query, Parameters, Fun, Acc0, FinalizeFun, Mode, {async, ConnPid, fun(QueryResult) ->
-                    pgsql_simple_query0("set statement_timeout to default", {async, ConnPid, fun(ResetResult) ->
-                        true = set_succeeded_or_within_failed_transaction(ResetResult),
-                        gen_server:reply(From, QueryResult),
-                        gen_server:cast(ConnPid, {command_completed, CurrentCommand})
-                    end}, [], State1)
-                end}, QueryOptions, State1)
-            end),
-            State1
+            case set_succeeded_or_within_failed_transaction(SetResult) of
+                true ->
+                    spawn_link(fun() ->
+                        pgsql_extended_query0(Query, Parameters, Fun, Acc0, FinalizeFun, Mode, {async, ConnPid, fun
+                            ({error, closed} = QueryError) ->
+                                gen_server:reply(From, QueryError),
+                                gen_server:cast(ConnPid, {command_completed, CurrentCommand});
+                            (QueryResult) ->
+                                pgsql_simple_query0("set statement_timeout to default", {async, ConnPid, fun(ResetResult) ->
+                                    _ = set_succeeded_or_within_failed_transaction(ResetResult),
+                                    gen_server:reply(From, QueryResult),
+                                    gen_server:cast(ConnPid, {command_completed, CurrentCommand})
+                                end}, [], State1)
+                        end}, QueryOptions, State1)
+                    end),
+                    State1;
+                false ->
+                    gen_server:reply(From, SetResult),
+                    command_completed(CurrentCommand, State1)
+            end
     end.
 
 -spec pgsql_extended_query0(iodata(), [any()], fun(), any(), fun(), all | batch | {cursor, non_neg_integer()}, sync, query_options(), #state{}) -> {any(), #state{}};
@@ -984,9 +993,9 @@ pgsql_extended_query0(Query, Parameters, Fun, Acc0, FinalizeFun, Mode, AsyncT, Q
                     case Mode of
                         batch ->
                             {_, ResultRL, FinalState} = lists:foldl(fun(_ParametersBatch, {AccLoopState, AccResults, AccState}) ->
-                                        {Result, AccState1} = pgsql_extended_query_receive_loop(AccLoopState, Fun, Acc0, FinalizeFun, 0, sync, QueryOptions, AccState),
-                                        {bind_complete, [Result | AccResults], AccState1}
-                                end, {LoopState, [], State}, Parameters),
+                                {Result, AccState1} = pgsql_extended_query_receive_loop(AccLoopState, Fun, Acc0, FinalizeFun, 0, sync, QueryOptions, AccState),
+                                {bind_complete, [Result | AccResults], AccState1}
+                            end, {LoopState, [], State}, Parameters),
                             Result = lists:reverse(ResultRL),
                             return_async(Result, AsyncT, FinalState);
                         all ->
@@ -1001,8 +1010,8 @@ pgsql_extended_query0(Query, Parameters, Fun, Acc0, FinalizeFun, Mode, AsyncT, Q
             return_async(PacketT, AsyncT, State)
     end.
 
--spec encode_bind_describe_execute(all | {cursor, non_neg_integer()}, [any()], [pgsql_oid()], pgsql_oid_map(), boolean()) -> {ok, iodata()} | {error, any()};
-                                  (batch, [[any()]], [pgsql_oid()], pgsql_oid_map(), boolean()) -> {ok, iodata()} | {error, any()}.
+-spec encode_bind_describe_execute(all | {cursor, non_neg_integer()}, [any()], [pgsql_oid()], pgsql_oid_map(), boolean() | undefined) -> {ok, iodata()} | {error, any()};
+                                  (batch, [[any()]], [pgsql_oid()], pgsql_oid_map(), boolean() | undefined) -> {ok, iodata()} | {error, any()}.
 encode_bind_describe_execute(Mode, Parameters, ParameterDataTypes, OIDMap, IntegerDateTimes) ->
     DescribeMessage = pgsql_protocol:encode_describe_message(portal, ""),
     MaxRowsStep = case Mode of
@@ -1020,14 +1029,16 @@ encode_bind_describe_execute(Mode, Parameters, ParameterDataTypes, OIDMap, Integ
             batch ->
                 [
                     [pgsql_protocol:encode_bind_message("", "", ParametersBatch, ParameterDataTypes, OIDMap, IntegerDateTimes),
-                    DescribeMessage, ExecuteMessage, SyncOrFlushMessage] || ParametersBatch <- Parameters];
+                    DescribeMessage, ExecuteMessage, SyncOrFlushMessage] || ParametersBatch <- Parameters
+                ];
             _ ->
                 BindMessage = pgsql_protocol:encode_bind_message("", "", Parameters, ParameterDataTypes, OIDMap, IntegerDateTimes),
                 [BindMessage, DescribeMessage, ExecuteMessage, SyncOrFlushMessage]
         end,
         {ok, SinglePacket}
-    catch throw:Exception ->
-        {error, Exception}
+    catch
+        throw:Exception ->
+            {error, Exception}
     end.
 
 requires_statement_description(batch, ParametersL) ->
@@ -1047,7 +1058,7 @@ pgsql_extended_query_receive_loop(LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep
             return_async(ReceiveError, AsyncT, State0)
     end.
 
--spec pgsql_extended_query_receive_loop0(pgsql_backend_message(), extended_query_loop_state(), fun(), any(), fun(), non_neg_integer(), sync, query_options(), #state{}) -> {any(), query_options(), #state{}};
+-spec pgsql_extended_query_receive_loop0(pgsql_backend_message(), extended_query_loop_state(), fun(), any(), fun(), non_neg_integer(), sync, query_options(), #state{}) -> {any(), #state{}};
                                         (pgsql_backend_message(), extended_query_loop_state(), fun(), any(), fun(), non_neg_integer(), {async, pid(), fun((any()) -> ok)}, query_options(), #state{}) -> ok.
 pgsql_extended_query_receive_loop0(#parameter_status{name = Name, value = Value}, LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, State0) ->
     State1 = handle_parameter(Name, Value, AsyncT, State0),
@@ -1103,12 +1114,14 @@ pgsql_extended_query_receive_loop0(#copy_done{}, LoopState, Fun, Acc0, FinalizeF
     pgsql_extended_query_receive_loop(LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, State0);
 pgsql_extended_query_receive_loop0(#command_complete{command_tag = Tag}, _LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, #state{socket = {SockModule, Sock}} = State0) ->
     Result = FinalizeFun(Tag, QueryOptions, Acc0),
-    if  MaxRowsStep > 0 ->
+    if
+        MaxRowsStep > 0 ->
             case SockModule:send(Sock, pgsql_protocol:encode_sync_message()) of
                 ok -> pgsql_extended_query_receive_loop({result, Result}, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, State0);
                 {error, _} = SendSyncPacketError -> return_async(SendSyncPacketError, AsyncT, State0)
             end;
-        true -> pgsql_extended_query_receive_loop({result, Result}, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, State0)
+        true ->
+            pgsql_extended_query_receive_loop({result, Result}, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, State0)
     end;
 pgsql_extended_query_receive_loop0(#portal_suspended{}, LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, #state{socket = {SockModule, Sock}} = State0) ->
     ExecuteMessage = pgsql_protocol:encode_execute_message("", MaxRowsStep),
@@ -1121,13 +1134,13 @@ pgsql_extended_query_receive_loop0(#portal_suspended{}, LoopState, Fun, Acc0, Fi
     end;
 pgsql_extended_query_receive_loop0(#ready_for_query{}, {result, Result}, _Fun, _Acc0, _FinalizeFun, _MaxRowsStep, AsyncT, _QueryOptions, State0) ->
     return_async(Result, AsyncT, State0);
-pgsql_extended_query_receive_loop0(#copy_in_response{}, LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, #state{socket={SockModule,Sock}}=State0) ->
+pgsql_extended_query_receive_loop0(#copy_in_response{}, LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, #state{socket = {SockModule, Sock}} = State0) ->
     ErrorMessage = <<"Cannot use COPY with extended_query">>,
-    Packet = [pgsql_protocol:encode_copy_fail(ErrorMessage),pgsql_protocol:encode_sync_message()],
-    Res= SockModule:send(Sock, Packet),
+    Packet = [pgsql_protocol:encode_copy_fail(ErrorMessage), pgsql_protocol:encode_sync_message()],
+    Res = SockModule:send(Sock, Packet),
     case Res of
         ok -> pgsql_extended_query_receive_loop(LoopState, Fun, Acc0, FinalizeFun, MaxRowsStep, AsyncT, QueryOptions, State0);
-        {error,_} = SendError -> return_async(SendError, AsyncT, State0)
+        {error, _} = SendError -> return_async(SendError, AsyncT, State0)
     end;
 pgsql_extended_query_receive_loop0(#error_response{fields = Fields}, LoopState, _Fun, _Acc0, _FinalizeFun, MaxRowsStep, AsyncT, _QueryOptions, #state{socket = {SockModule, Sock}} = State0) ->
     Error = {error, {pgsql_error, Fields}},
@@ -1168,11 +1181,12 @@ pgsql_send_copy_end(From, #state{socket = {SockModule, Sock}} = State0) ->
     {Result1, State1} = pgsql_send_copy_end_flush(Result0, State0),
     gen_server:reply(From, Result1),
     State1.
+
 pgsql_send_copy_end_flush(Result0, #state{socket = Socket, subscribers = Subscribers} = State0) ->
     case receive_message(Socket, sync, Subscribers) of
-        {ok, {command_complete, <<"COPY ",CopyCount/binary>>}} ->
+        {ok, {command_complete, <<"COPY ", CopyCount/binary>>}} ->
             CopyCountNum = ?binary_to_integer(CopyCount),
-            pgsql_send_copy_end_flush({copy,CopyCountNum}, State0);
+            pgsql_send_copy_end_flush({copy, CopyCountNum}, State0);
         {ok, {ready_for_query, _}} ->
             {Result0, State0#state{current = undefined}}
     end.
@@ -1218,8 +1232,9 @@ extended_query_finalize(Tag, QueryOptions, {RowDescs, AccRows}) ->
 fold_finalize(_Tag, _QueryOptions, Acc) ->
     {ok, Acc}.
 
-map_fn(Row, _RowDesc, _QueryOptions, {Function, Acc}) -> {Function, [Function(Row) | Acc]}.
-    
+map_fn(Row, _RowDesc, _QueryOptions, {Function, Acc}) ->
+    {Function, [Function(Row) | Acc]}.
+
 map_finalize(_Tag, _QueryOptions, {_Function, Acc}) ->
     {ok, lists:reverse(Acc)}.
 
@@ -1232,16 +1247,18 @@ foreach_finalize(_Tag, _QueryOptions, _Function) ->
 
 %%--------------------------------------------------------------------
 %% @doc Handle parameter status messages. These can happen anytime.
-%% 
+%%
 handle_parameter(<<"integer_datetimes">> = Key, <<"on">> = Value, AsyncT, State0) ->
     set_parameter_async(Key, Value, AsyncT),
     State0#state{integer_datetimes = true};
 handle_parameter(<<"integer_datetimes">> = Key, <<"off">> = Value, AsyncT, State0) ->
     set_parameter_async(Key, Value, AsyncT),
     State0#state{integer_datetimes = false};
-handle_parameter(_Key, _Value, _AsyncT, State0) -> State0.
+handle_parameter(_Key, _Value, _AsyncT, State0) ->
+    State0.
 
-set_parameter_async(_Key, _Value, sync) -> ok;
+set_parameter_async(_Key, _Value, sync) ->
+    ok;
 set_parameter_async(Key, Value, {async, ConnPid, _}) ->
     gen_server:cast(ConnPid, {set_parameter, Key, Value}).
 
@@ -1255,9 +1272,10 @@ convert_statement(StatementStr) when is_list(StatementStr) ->
 convert_statement(StatementStr) when is_binary(StatementStr) ->
     convert_statement(binary_to_list(StatementStr)).
 
-convert_statement_0([], _InString, _PlaceholderIndex, Acc) -> lists:reverse(Acc);
+convert_statement_0([], _InString, _PlaceholderIndex, Acc) ->
+    lists:reverse(Acc);
 convert_statement_0([$? | Tail], false, PlaceholderIndex, Acc) ->
-    convert_statement_0(Tail, false, PlaceholderIndex + 1, lists:reverse([$$ | integer_to_list(PlaceholderIndex)]) ++ Acc);
+    convert_statement_0(Tail, false, PlaceholderIndex + 1, lists:reverse([$$ | integer_to_list(PlaceholderIndex)], Acc));
 convert_statement_0([$' | Tail], InString, PlaceholderIndex, Acc) ->
     convert_statement_0(Tail, not InString, PlaceholderIndex, [$' | Acc]);
 convert_statement_0([H | Tail], InString, PlaceholderIndex, Acc) ->
@@ -1305,8 +1323,10 @@ broadcast_to_subscribers(Packet, AsyncT, Subscribers) ->
     end,
     Connection = {?MODULE, ConnPid},
     What = case Packet of
-        #notification_response{procid = ProcID, channel = Channel, payload = Payload} -> {notification, ProcID, Channel, Payload};
-        #notice_response{fields = Fields} -> {notice, Fields}
+        #notification_response{procid = ProcID, channel = Channel, payload = Payload} ->
+            {notification, ProcID, Channel, Payload};
+        #notice_response{fields = Fields} ->
+            {notice, Fields}
     end,
     Message = {pgsql, Connection, What},
     lists:foreach(fun({Subscriber, _Ref}) ->
@@ -1328,17 +1348,17 @@ decode_tag(Tag) ->
 
 decode_verb(Verb) ->
     VerbStr = binary_to_list(Verb),
-    VerbLC = string:to_lower(VerbStr),
+    VerbLC = string:lowercase(VerbStr),
     list_to_atom(VerbLC).
 
 decode_object(<<FirstByte, _/binary>> = Object) when FirstByte =< $9 andalso FirstByte >= $0 ->
     Words = binary:split(Object, <<" ">>, [global]),
-    [list_to_integer(binary_to_list(Word)) || Word <- Words];
+    [binary_to_integer(Word) || Word <- Words];
 decode_object(Object) ->
     ObjectUStr = re:replace(Object, <<" ">>, <<"_">>, [global, {return, list}]),
-    ObjectULC = string:to_lower(ObjectUStr),
+    ObjectULC = string:lowercase(ObjectUStr),
     [list_to_atom(ObjectULC)].
-    
+
 %%--------------------------------------------------------------------
 %% @doc Convert a native result to an odbc result.
 %%
@@ -1406,7 +1426,7 @@ oob_update_oid_map_if_required(OIDs, #state{oidmap = OIDMap} = State0) ->
     end.
 
 oob_update_oid_map(#state{options = Options0} = State0) ->
-    OOBOptions =  lists:keystore(fetch_oid_map, 1, Options0, {fetch_oid_map, false}),
+    OOBOptions = lists:keystore(fetch_oid_map, 1, Options0, {fetch_oid_map, false}),
     {ok, Pid} = pgsql_connection_sup:start_child(OOBOptions),
     SubConnection = {pgsql_connection, Pid},
     {ok, NewOIDMap} = fold(fun({Oid, Typename}, AccTypes) ->
@@ -1496,7 +1516,8 @@ process_active_data(<<Code:8/integer, Size:32/integer, Tail/binary>>, #state{soc
             SockModule:close(Sock),
             State0#state{socket = closed}
     end;
-process_active_data(<<>>, State0) -> State0;
+process_active_data(<<>>, State0) ->
+    State0;
 process_active_data(PartialHeader, #state{socket = {SockModule, Sock}} = State0) ->
     PartialHeaderSize = byte_size(PartialHeader),
     case SockModule:recv(Sock, ?MESSAGE_HEADER_SIZE - PartialHeaderSize) of
@@ -1506,7 +1527,7 @@ process_active_data(PartialHeader, #state{socket = {SockModule, Sock}} = State0)
             error_logger:error_msg("Unexpected asynchronous error\n~p\n", [Error]),
             SockModule:close(Sock),
             State0#state{socket = closed}
-    end.    
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc Subscribe to notifications. We setup a monitor to clean the list up.
@@ -1532,9 +1553,9 @@ do_unsubscribe(Pid, List) ->
 %%
 call_and_retry(ConnPid, Command, Retry, Timeout) ->
     case gen_server:call(ConnPid, {do_query, Command}, Timeout) of
-        {error, closed} when Retry -> 
+        {error, closed} when Retry ->
             call_and_retry(ConnPid, Command, Retry, Timeout);
-        Other -> 
+        Other ->
             Other
     end.
 
@@ -1573,7 +1594,6 @@ do_query0({send_copy_data, Data}, From, State0) ->
     pgsql_send_copy_data(Data, From, State0);
 do_query0({send_copy_end}, From, State0) ->
     pgsql_send_copy_end(From, State0).
-
 
 command_completed(Command, #state{current = Command, pending = []} = State) ->
     set_active_once(State),
